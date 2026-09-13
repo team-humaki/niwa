@@ -36,5 +36,11 @@ Claude integration), the tsuku network install and the macOS leg are left out on
 - `out=$(gofmt -l .) && [ -z "$out" ]`
 - `go vet ./...`
 - `go test -race ./...`
-- `H=$(git rev-parse HEAD) && S=$(git status --porcelain) && make test-functional && [ "$(git rev-parse HEAD)" = "$H" ] && [ "$(git status --porcelain)" = "$S" ]` (CI's checkout tripwire around the functional suite; "another functional test run holds" the lock means a run is already going in this checkout: cannot-verify, not a failed change)
+- `H=$(git rev-parse HEAD) && S=$(git status --porcelain) && NIWA_TEST_TAGS='~@codex-discovery && ~@codex-live && ~@claude-integration' make test-functional && [ "$(git rev-parse HEAD)" = "$H" ] && [ "$(git status --porcelain)" = "$S" ]`
+  (CI's checkout tripwire around the functional suite; "another functional test run holds" the
+  lock means a run is already going in this checkout: cannot-verify, not a failed change.
+  Unlike CI, three tags are skipped, for two different reasons. `@codex-live` and
+  `@claude-integration` stay out for good: on a logged-in host they make real, billed model
+  calls, and CI's runners never run them. `@codex-discovery` is out only because it fails
+  wherever Codex is installed: remove it from the list when tsukumogami/niwa#304 is fixed.)
 - `go build -o niwa-test ./cmd/niwa && for shell in bash zsh; do output=$(./niwa-test shell-init "$shell") && [ -n "$output" ] && echo "$output" | grep -q "niwa()" && echo "$output" | grep -q "__complete" || exit 1; done && rm niwa-test`
