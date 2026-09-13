@@ -66,17 +66,33 @@ instead of the human-readable summary.`,
 }
 
 var sessionDestroyCmd = &cobra.Command{
-	Use:   "destroy <session-id>",
-	Short: "Destroy a worktree and its working directory",
+	Use:   "destroy <target>",
+	Short: "Destroy a worktree, or every worktree of a session",
 	Long: `Destroy a worktree: mark its lifecycle state ended, remove the working
 directory, and delete the worktree branch (only if already merged; use
 --force to delete regardless).
 
-Identify the worktree either by <session-id> or by --by-path <path>, which
-resolves a worktree directory to its owning session before destroying it.
+<target> is one of four things. A worktree id, or --by-path <path>, names one
+worktree. A session id, or the short handle niwa list shows, names a session
+and destroys every active worktree of that session's instance, in worktree-id
+order, continuing past a refusal. A session with no recorded handle can also be
+named by the first eight characters of its session id.
 
-Refuses to destroy a worktree that holds uncommitted changes unless --force
-is passed (the worktree analog of the instance-level uncommitted-work guard).`,
+A session target never removes the session mapping, the instance directory, or
+the repositories cloned inside it, and it resolves from anywhere in the
+workspace. A worktree id only means something inside the instance that owns it.
+
+Refuses to destroy a worktree that holds uncommitted changes, or one with a
+live attach lock, unless --force is passed. --force applies to one worktree, so
+it is a usage error with a session id or handle: pass a worktree id or
+--by-path to force one at a time.
+
+Exit codes (destroy's own; attach and detach use 3 and 4 for other things):
+  0  destroyed, or nothing left to destroy
+  1  a guard refused at least one worktree, or the session cannot be torn down
+  2  usage error, including --force with a session
+  3  the target matched no worktree and no session
+  4  the target is ambiguous; the message names the matches`,
 	// Same reasoning as sessionCreateCmd: RunE handles missing-arg with a
 	// usage string and exit code 2 via *sessionattach.ExitCodeError.
 	Args:              cobra.MaximumNArgs(1),
@@ -515,8 +531,13 @@ func resolveSessionIDByPath(instanceRoot, wantPath string) (string, error) {
 		}
 	}
 
+	// Exit 3 is destroy's "nothing matched", shared with the positional form.
+	// Two routes to the same outcome should not differ by which one located the
+	// target: a cleanup script calling --by-path after a reap is exactly the
+	// caller that needs to tell "already gone" from a guard refusal. This moved
+	// from exit 1 and is announced as a behavior change.
 	return "", &sessionattach.ExitCodeError{
-		Code: 1,
+		Code: 3,
 		Msg: fmt.Sprintf("niwa: error: no active worktree found at path %q. "+
 			"Run `niwa worktree list` to see worktrees and their paths.", wantPath),
 	}
@@ -553,21 +574,71 @@ func runSessionDestroy(cmd *cobra.Command, args []string) error {
 				"Run `niwa worktree list` to discover existing worktrees.",
 		}
 	}
-	instanceRoot, err := resolveInstanceRoot()
+	// --by-path names a directory, not an id, so it keeps its own resolution.
+	// It still needs an instance to resolve against, which at a multi-instance
+	// root is a refusal.
+	if sessionDestroyByPath != "" {
+		instanceRoot, err := resolveInstanceRoot()
+		if err != nil {
+			return err
+		}
+		sessionID, err := resolveSessionIDByPath(instanceRoot, sessionDestroyByPath)
+		if err != nil {
+			return err
+		}
+		return destroyOneWorktree(cmd, instanceRoot, sessionID)
+	}
+
+	// The positional value is resolved against both readings: a worktree id of
+	// the instance we are standing in, and a session in the workspace's mapping
+	// store. Resolution runs from anywhere in the workspace, which is the point
+	// of #292 -- the id a developer holds is a session id or a handle, and
+	// neither appears in the worktree lifecycle store at all.
+	scope, err := resolveDestroyScope()
+	if err != nil {
+		return err
+	}
+	mappings, err := loadMappingsForDestroy(scope.workspaceRoot)
+	if err != nil {
+		return err
+	}
+	target, err := resolveDestroyTarget(scope, args[0], mappings)
 	if err != nil {
 		return err
 	}
 
-	var sessionID string
-	if sessionDestroyByPath != "" {
-		sessionID, err = resolveSessionIDByPath(instanceRoot, sessionDestroyByPath)
-		if err != nil {
-			return err
+	if target.mapping != nil {
+		// --force applies to one worktree. A session can back several, and a
+		// mistyped or prefix-matched id that forced its way through would
+		// discard every uncommitted change and unmerged branch in the instance.
+		if sessionDestroyForce {
+			return &sessionattach.ExitCodeError{
+				Code: 2,
+				Msg:  "niwa: error: --force applies to one worktree; pass a worktree id or --by-path <worktree path>",
+			}
 		}
-	} else {
-		sessionID = args[0]
+		instanceDir, gone, checkErr := checkSessionInstance(scope.workspaceRoot, *target.mapping, mappings)
+		if checkErr != nil {
+			return &sessionattach.ExitCodeError{Code: 1, Msg: checkErr.Error()}
+		}
+		if gone {
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"session: nothing to destroy: instance %s for session %s no longer exists\n",
+				filepath.Clean(target.mapping.InstancePath), target.mapping.SessionID)
+			return nil
+		}
+		return destroySessionWorktrees(cmd, instanceDir, *target.mapping, worktree.StdGitInvoker{})
 	}
 
+	return destroyOneWorktree(cmd, scope.instanceDir, target.worktreeID)
+}
+
+// destroyOneWorktree is the pre-existing single-worktree path, unchanged in
+// behavior and output: a worktree id or a --by-path lookup still prints the
+// bare destroyed line. Only session-resolved teardown prints the enriched one,
+// because only there does a caller need to know which worktrees of which
+// instance were removed.
+func destroyOneWorktree(cmd *cobra.Command, instanceRoot, sessionID string) error {
 	state, err := worktree.DestroySession(context.Background(), instanceRoot, sessionID, sessionDestroyForce, worktree.StdGitInvoker{})
 	if err != nil {
 		// A live attach holds the worktree and --force was not passed: surface
@@ -611,6 +682,18 @@ func runSessionLifecycleList(cmd *cobra.Command, repo, status string, onlyAttach
 	}
 	instanceRoot, err := resolveInstanceRoot()
 	if err != nil {
+		// At a multi-instance root there are no worktrees to list, which is a
+		// fact about where the command ran rather than a failure. Print the
+		// redirect and exit 0, so a script looping over directories is not
+		// derailed by hitting the root. --json still gets a parseable empty
+		// array on stdout, with the redirect kept on stderr.
+		if errors.Is(err, errAtWorkspaceRoot) {
+			fmt.Fprintln(cmd.ErrOrStderr(), "niwa: "+atWorkspaceRootMessage)
+			if sessionListJSON {
+				fmt.Fprintln(cmd.OutOrStdout(), "[]")
+			}
+			return nil
+		}
 		return err
 	}
 

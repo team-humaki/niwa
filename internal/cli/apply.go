@@ -360,6 +360,18 @@ func resolveRegistryScope(name string) (*workspace.ApplyScope, error) {
 	// in a child subdirectory). EnumerateInstances only scans children, so
 	// it returns empty for this layout. Fall back to treating workspaceRoot
 	// as the sole instance.
+	//
+	// This deliberately does NOT use workspace.IsSingleInstanceLayout, which
+	// additionally requires a named instance. That helper answers the worktree
+	// commands' question -- "may I create and destroy worktrees in this root?"
+	// -- where a freshly initialized root must say no, or worktrees land inside
+	// the config directory a refresh rotates. Apply's question is different:
+	// "is the root the thing I should apply to?", and for a root with state and
+	// no children the answer is yes precisely when it is freshly initialized.
+	// That is the bootstrap case -- `niwa init` then `niwa apply <name>` --
+	// where instance_name has not been written yet and the per-instance
+	// pipeline still has to run the lazy snapshot conversion and the posture
+	// write. Sharing the stricter predicate here silently skipped both.
 	singleInstanceLayout := false
 	if len(instances) == 0 {
 		if _, statErr := os.Stat(filepath.Join(workspaceRoot, workspace.StateDir, workspace.StateFile)); statErr == nil {
