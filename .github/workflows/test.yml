@@ -66,6 +66,7 @@ jobs:
 
       # Tidiness is a property of the checked-in go.mod, not of the runner, so
       # one platform answers it for both.
+      # Copied into .claude/shirabe-extensions/work-on.md (the /work-on verification map), with any deliberate differences noted there; change both together.
       - name: Verify go.mod is tidy
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -81,6 +82,7 @@ jobs:
       # files had drifted by the time it was added -- which is the real cost of
       # leaving it ungated, because the next `gofmt -w` sweeps every one of them
       # into whatever PR happens to run it.
+      # Copied into .claude/shirabe-extensions/work-on.md (the /work-on verification map), with any deliberate differences noted there; change both together.
       - name: Verify gofmt
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -94,6 +96,7 @@ jobs:
       # Worth running on both: vet type-checks the files selected by the
       # current GOOS, so the darwin build-tagged sources are only ever checked
       # by the macOS job.
+      # Copied into .claude/shirabe-extensions/work-on.md (the /work-on verification map), with any deliberate differences noted there; change both together.
       - name: Vet
         run: go vet ./...
 
@@ -101,6 +104,7 @@ jobs:
       # to mutate raced under concurrent dispatch and went unnoticed because
       # nothing ran the detector; keeping it in the gate is what stops that
       # recurring.
+      # Copied into .claude/shirabe-extensions/work-on.md (the /work-on verification map), with any deliberate differences noted there; change both together.
       - name: Test
         run: go test -race ./...
 
@@ -108,6 +112,7 @@ jobs:
       # the check after it can prove the suite left it alone. rev-parse rather
       # than symbolic-ref: actions/checkout leaves a detached HEAD, so a
       # symbolic-ref guard would be red on every run for no reason.
+      # Copied into .claude/shirabe-extensions/work-on.md (the /work-on verification map), with any deliberate differences noted there; change both together.
       - name: Snapshot repository state
         if: matrix.os == 'ubuntu-latest'
         id: repo-before
@@ -118,6 +123,7 @@ jobs:
       # Linux-only until the godog harness is portable: it fakes a TTY with
       # `script -c`, which is GNU-only syntax, and several scenarios assume an
       # unresolved /tmp path. Tracked in tsukumogami/niwa#243.
+      # Copied into .claude/shirabe-extensions/work-on.md (the /work-on verification map), with any deliberate differences noted there; change both together.
       - name: Functional tests
         if: matrix.os == 'ubuntu-latest'
         run: make test-functional
@@ -128,6 +134,7 @@ jobs:
       # needing to know how a future test might escape -- it only asks whether
       # the checkout changed. `always()` so it still reports when the suite
       # itself failed, which is exactly when an escape is most likely.
+      # Copied into .claude/shirabe-extensions/work-on.md (the /work-on verification map), with any deliberate differences noted there; change both together.
       - name: Verify the suite left the checkout alone
         if: always() && matrix.os == 'ubuntu-latest' && steps.repo-before.outcome == 'success'
         run: |
@@ -189,6 +196,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: curl -fsSL https://tsuku.dev/install.sh | bash
 
+      # Copied into .claude/shirabe-extensions/work-on.md (the /work-on verification map), with any deliberate differences noted there; change both together.
       - name: Verify shell-init output
         if: matrix.os == 'ubuntu-latest'
         run: |
