@@ -38,4 +38,8 @@ go.work.sum
 /.niwa/
 
 # Claude Code local config
-.claude/
+.claude/*
+# Except the shirabe-extensions directory, which holds niwa's /work-on
+# verification map (work-on.md) and must ship in the repo. The distributed
+# *.local.md extensions in the same directory stay ignored by *.local* above.
+!.claude/shirabe-extensions/
